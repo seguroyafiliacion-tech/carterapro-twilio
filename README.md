@@ -182,3 +182,22 @@ IMPORTANTE:
 ```env
 TWILIO_WHATSAPP_FROM=whatsapp:+52TU_NUMERO_REAL
 ```
+
+
+## Corrección importante: responder desde el mismo número que recibió
+
+Esta versión usa `req.body.To` como `from` al responder.
+
+Eso significa:
+- Si el cliente escribió al número real aprobado, la respuesta sale desde ese mismo número.
+- Si el cliente escribió al Sandbox, la respuesta sale desde Sandbox.
+- Evita responder desde otro `TWILIO_WHATSAPP_FROM` diferente, que puede quedar en `queued` y luego fallar.
+
+En logs ahora verás:
+
+```text
+INBOUND WHATSAPP { from: cliente, to: numero_twilio }
+SENDING BOT REPLY { from: numero_twilio, to: cliente }
+```
+
+El valor `from` de `SENDING BOT REPLY` debe ser igual al `to` de `INBOUND WHATSAPP`.
