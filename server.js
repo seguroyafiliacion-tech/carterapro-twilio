@@ -67,9 +67,28 @@ function daysUntil(value) {
   return Math.ceil((d - now) / 86400000);
 }
 
+function firebaseBaseUrl() {
+  let base = String(FIREBASE_DB_URL || "").trim();
+
+  if (!base) {
+    throw new Error("FIREBASE_DB_URL no está configurada en Render.");
+  }
+
+  // Corrección automática para valores como:
+  // //baseportals-default-rtdb.firebaseio.com
+  // baseportals-default-rtdb.firebaseio.com
+  if (base.startsWith("//")) base = "https:" + base;
+  if (!/^https?:\/\//i.test(base)) base = "https://" + base;
+
+  base = base.replace(/\.json$/i, "");
+  base = base.replace(/\/+$/, "");
+
+  return base;
+}
+
 function firebaseUrl(path = "") {
-  const base = String(FIREBASE_DB_URL || "").replace(/\/$/, "");
-  const clean = String(path || "").replace(/^\/+/, "");
+  const base = firebaseBaseUrl();
+  const clean = String(path || "").replace(/^\/+/, "").replace(/\.json$/i, "");
   return `${base}/${clean}.json`;
 }
 
@@ -449,39 +468,73 @@ app.get("/run-status-followups", async (req, res) => {
   }
 });
 
-app.post("/twilio/webhook", async (req, res) => {
+
+app.get("/twilio/webhook-test", (_req, res) => {
+  const twiml = new MessagingResponse();
+  twiml.message("Webhook OK. Si ves este XML, Twilio puede recibir respuesta.");
+  res.type("text/xml").send(twiml.toString());
+});
+
+app.post("/twilio/webhook", (req, res) => {
   const twiml = new MessagingResponse();
 
-  try {
-    const from = req.body.From || "";
-    const bodyRaw = req.body.Body || "";
-    const numMedia = Number(req.body.NumMedia || 0);
-    const media = [];
+  const from = req.body.From || "";
+  const bodyRaw = req.body.Body || "";
+  const numMedia = Number(req.body.NumMedia || 0);
+  const hasMedia = numMedia > 0;
 
-    for (let i = 0; i < numMedia; i++) {
-      media.push({
-        url: req.body[`MediaUrl${i}`],
-        contentType: req.body[`MediaContentType${i}`]
-      });
+  console.log("INBOUND WHATSAPP", {
+    from,
+    body: bodyRaw,
+    numMedia,
+    at: new Date().toISOString()
+  });
+
+  // IMPORTANTE:
+  // Primero respondemos a Twilio. Después guardamos en Firebase en segundo plano.
+  // Así evitamos que Twilio marque timeout o que no mande respuesta si Firebase tarda/falla.
+  const reply = genericAutoReply(bodyRaw, hasMedia);
+  twiml.message(reply);
+  res.type("text/xml").send(twiml.toString());
+
+  // Guardado en Firebase y tareas en segundo plano.
+  setImmediate(async () => {
+    try {
+      const media = [];
+      for (let i = 0; i < numMedia; i++) {
+        media.push({
+          url: req.body[`MediaUrl${i}`],
+          contentType: req.body[`MediaContentType${i}`]
+        });
+      }
+
+      try {
+        await logInboundGeneric(from, bodyRaw, media);
+      } catch (e) {
+        console.warn("No se pudo guardar inbound en Firebase:", e.message);
+      }
+
+      const body = String(bodyRaw || "").trim().toLowerCase();
+
+      if (body.includes("asesor") || body.includes("ayuda") || body === "4") {
+        try {
+          await createGenericTask(from, "Cliente solicita asesor", bodyRaw);
+        } catch (e) {
+          console.warn("No se pudo crear tarea asesor:", e.message);
+        }
+      }
+
+      if (hasMedia) {
+        try {
+          await createGenericTask(from, "Comprobante recibido", "Cliente envió comprobante por WhatsApp.");
+        } catch (e) {
+          console.warn("No se pudo crear tarea comprobante:", e.message);
+        }
+      }
+    } catch (err) {
+      console.error("Error post-respuesta webhook:", err);
     }
-
-    await logInboundGeneric(from, bodyRaw, media);
-
-    if (String(bodyRaw || "").toLowerCase().includes("asesor") || String(bodyRaw || "").trim() === "4") {
-      await createGenericTask(from, "Cliente solicita asesor", bodyRaw);
-    }
-
-    if (numMedia > 0) {
-      await createGenericTask(from, "Comprobante recibido", "Cliente envió comprobante por WhatsApp.");
-    }
-
-    twiml.message(genericAutoReply(bodyRaw, numMedia > 0));
-    res.type("text/xml").send(twiml.toString());
-  } catch (err) {
-    console.error(err);
-    twiml.message("Tuvimos un problema procesando tu mensaje. Un asesor revisará tu caso.");
-    res.type("text/xml").send(twiml.toString());
-  }
+  });
 });
 
 const port = process.env.PORT || 3000;

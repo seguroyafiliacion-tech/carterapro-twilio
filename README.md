@@ -136,3 +136,47 @@ Esta versión es directa y sencilla para prueba. Antes de producción:
 - Validar opt-in.
 - Cerrar reglas de Firebase.
 - Validar firma de Twilio.
+
+
+## Corrección importante FIREBASE_DB_URL
+
+En Render debe quedar exactamente así:
+
+```env
+FIREBASE_DB_URL=https://baseportals-default-rtdb.firebaseio.com
+```
+
+No lo pongas así:
+
+```env
+FIREBASE_DB_URL=//baseportals-default-rtdb.firebaseio.com
+```
+
+Tampoco agregues `.json` al final.
+
+
+## Versión respuesta inmediata
+
+Esta versión contesta a Twilio primero y guarda en Firebase después.
+
+Esto corrige el caso donde Firebase sí recibe datos, pero WhatsApp no devuelve respuesta porque el webhook tarda o falla antes de responder.
+
+Endpoint de prueba TwiML:
+
+```text
+/twilio/webhook-test
+```
+
+Debe mostrar XML parecido a:
+
+```xml
+<Response><Message>Webhook OK...</Message></Response>
+```
+
+Webhook real:
+
+```text
+/twilio/webhook
+```
+
+En Twilio debe estar configurado como HTTP POST.
