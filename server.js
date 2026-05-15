@@ -367,6 +367,18 @@ COMPROBANTE para enviar evidencia
 ASESOR para que te contacte una persona`;
 }
 
+
+async function sendBotReply(to, body) {
+  console.log("SENDING BOT REPLY", { from: TWILIO_WHATSAPP_FROM, to, preview: body.slice(0, 80) });
+  const msg = await client.messages.create({
+    from: TWILIO_WHATSAPP_FROM,
+    to,
+    body
+  });
+  console.log("BOT REPLY SENT", { sid: msg.sid, status: msg.status });
+  return msg.sid;
+}
+
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
@@ -378,6 +390,21 @@ app.get("/", (_req, res) => {
       "GET /run-status-followups?limit=10"
     ]
   });
+});
+
+
+app.get("/reply-test", async (req, res) => {
+  try {
+    const to = req.query.to || req.query.phone;
+    if (!to) return res.status(400).json({ ok: false, error: "Falta to o phone" });
+    const formatted = String(to).startsWith("whatsapp:") ? String(to) : toWhatsapp(to);
+    const body = genericAutoReply("PAGAR", false);
+    const sid = await sendBotReply(formatted, body);
+    res.json({ ok: true, sid, to: formatted, from: TWILIO_WHATSAPP_FROM });
+  } catch (err) {
+    console.error("reply-test error", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.get("/test-send", async (req, res) => {
@@ -469,15 +496,7 @@ app.get("/run-status-followups", async (req, res) => {
 });
 
 
-app.get("/twilio/webhook-test", (_req, res) => {
-  const twiml = new MessagingResponse();
-  twiml.message("Webhook OK. Si ves este XML, Twilio puede recibir respuesta.");
-  res.type("text/xml").send(twiml.toString());
-});
-
 app.post("/twilio/webhook", (req, res) => {
-  const twiml = new MessagingResponse();
-
   const from = req.body.From || "";
   const bodyRaw = req.body.Body || "";
   const numMedia = Number(req.body.NumMedia || 0);
@@ -490,14 +509,9 @@ app.post("/twilio/webhook", (req, res) => {
     at: new Date().toISOString()
   });
 
-  // IMPORTANTE:
-  // Primero respondemos a Twilio. Después guardamos en Firebase en segundo plano.
-  // Así evitamos que Twilio marque timeout o que no mande respuesta si Firebase tarda/falla.
-  const reply = genericAutoReply(bodyRaw, hasMedia);
-  twiml.message(reply);
-  res.type("text/xml").send(twiml.toString());
+  // HTTP 200 inmediato. La respuesta WhatsApp se manda con API saliente.
+  res.status(200).send("OK");
 
-  // Guardado en Firebase y tareas en segundo plano.
   setImmediate(async () => {
     try {
       const media = [];
@@ -508,6 +522,14 @@ app.post("/twilio/webhook", (req, res) => {
         });
       }
 
+      const reply = genericAutoReply(bodyRaw, hasMedia);
+
+      try {
+        await sendBotReply(from, reply);
+      } catch (e) {
+        console.error("No se pudo enviar respuesta WhatsApp por API:", e.message);
+      }
+
       try {
         await logInboundGeneric(from, bodyRaw, media);
       } catch (e) {
@@ -515,24 +537,17 @@ app.post("/twilio/webhook", (req, res) => {
       }
 
       const body = String(bodyRaw || "").trim().toLowerCase();
-
       if (body.includes("asesor") || body.includes("ayuda") || body === "4") {
-        try {
-          await createGenericTask(from, "Cliente solicita asesor", bodyRaw);
-        } catch (e) {
-          console.warn("No se pudo crear tarea asesor:", e.message);
-        }
+        try { await createGenericTask(from, "Cliente solicita asesor", bodyRaw); } 
+        catch (e) { console.warn("No se pudo crear tarea asesor:", e.message); }
       }
 
       if (hasMedia) {
-        try {
-          await createGenericTask(from, "Comprobante recibido", "Cliente envió comprobante por WhatsApp.");
-        } catch (e) {
-          console.warn("No se pudo crear tarea comprobante:", e.message);
-        }
+        try { await createGenericTask(from, "Comprobante recibido", "Cliente envió comprobante por WhatsApp."); } 
+        catch (e) { console.warn("No se pudo crear tarea comprobante:", e.message); }
       }
     } catch (err) {
-      console.error("Error post-respuesta webhook:", err);
+      console.error("Error post-webhook:", err);
     }
   });
 });

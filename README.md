@@ -155,28 +155,30 @@ FIREBASE_DB_URL=//baseportals-default-rtdb.firebaseio.com
 Tampoco agregues `.json` al final.
 
 
-## Versión respuesta inmediata
+## Versión API Reply
 
-Esta versión contesta a Twilio primero y guarda en Firebase después.
+Esta versión no depende de TwiML para responder WhatsApp.
 
-Esto corrige el caso donde Firebase sí recibe datos, pero WhatsApp no devuelve respuesta porque el webhook tarda o falla antes de responder.
+Flujo:
+1. Twilio manda webhook.
+2. Servidor responde `OK` de inmediato.
+3. Servidor manda respuesta por API con `client.messages.create()`.
 
-Endpoint de prueba TwiML:
-
-```text
-/twilio/webhook-test
-```
-
-Debe mostrar XML parecido a:
-
-```xml
-<Response><Message>Webhook OK...</Message></Response>
-```
-
-Webhook real:
+Endpoint de prueba:
 
 ```text
-/twilio/webhook
+/reply-test?phone=6622434983
 ```
 
-En Twilio debe estar configurado como HTTP POST.
+o:
+
+```text
+/reply-test?to=whatsapp:+5216622434983
+```
+
+IMPORTANTE:
+`TWILIO_WHATSAPP_FROM` debe ser el número real aprobado que recibió el mensaje:
+
+```env
+TWILIO_WHATSAPP_FROM=whatsapp:+52TU_NUMERO_REAL
+```
